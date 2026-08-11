@@ -10,6 +10,7 @@ func CORS(next http.Handler) http.Handler {
 			"http://localhost:3000":      true,
 			"https://localhost:3000":     true,
 			"https://jljorden.com:13443": true,
+			"https://jljorden.com": true,
 		}
 
 		if allowedOrigins[origin] {
