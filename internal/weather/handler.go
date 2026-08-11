@@ -21,9 +21,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 }
 
 func getWeather(w http.ResponseWriter, r *http.Request) {
-	apiKey := r.URL.Query().Get("OPENWEATHER_API_KEY")
+	apiKey := r.URL.Query().Get("apikey")
 	if apiKey == "" {
-		http.Error(w, `{"error":"Missing OPENWEATHER_API_KEY query parameter"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"Missing apikey query parameter"}`, http.StatusBadRequest)
 		return
 	}
 
