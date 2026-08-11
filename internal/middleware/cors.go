@@ -9,7 +9,7 @@ func CORS(next http.Handler) http.Handler {
 		allowedOrigins := map[string]bool{
 			"http://localhost:3000":      true,
 			"https://localhost:3000":     true,
-			"https://jljorden.com:14443": true,
+			"https://jljorden.com:13443": true,
 		}
 
 		if allowedOrigins[origin] {
