@@ -7,6 +7,7 @@ import (
 	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jljorden/homeapi/internal/middleware"
 
 	"github.com/jljorden/homeapi/internal/router"
 )
@@ -28,7 +29,8 @@ func main() {
 	}
 
 	mux := router.New(db)
+	handler := middleware.CORS(mux)
 
 	log.Println("listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	log.Fatal(http.ListenAndServe(":8080", handler))
 }
