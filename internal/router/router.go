@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/jljorden/homeapi/internal/greetings"
-	"github.com/jljorden/homeapi/internal/meetings"
+	"github.com/jljorden/homeapi/internal/jw"
 	"github.com/jljorden/homeapi/internal/weather"
 	"github.com/jljorden/homeapi/internal/dns"
 	"github.com/jljorden/homeapi/internal/links"
@@ -20,7 +20,7 @@ func New(db *sql.DB) *http.ServeMux {
 	greetings.NewHandler(store).RegisterRoutes(mux)
 
 	weather.RegisterRoutes(mux)
-	meetings.RegisterRoutes(mux)
+	jw.RegisterRoutes(mux)
 	links.RegisterRoutes(mux)
 	dns.RegisterRoutes(mux)
 	nut.RegisterRoutes(mux)
