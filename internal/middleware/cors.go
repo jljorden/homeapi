@@ -7,10 +7,7 @@ func CORS(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 
 		allowedOrigins := map[string]bool{
-			"http://localhost:3000":      true,
-			"https://localhost:3000":     true,
-			"https://jljorden.com:13443": true,
-			"https://jljorden.com": true,
+			"*":      true,
 		}
 
 		if allowedOrigins[origin] {
@@ -18,8 +15,8 @@ func CORS(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 		}
 
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
+		w.Header().Set("Access-Control-Allow-Methods", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 
 		if r.Method == http.MethodOptions {
