@@ -1,0 +1,11 @@
+services:
+  homeapi:
+    build:
+      context: .
+      dockerfile: dockerfile
+    container_name: homeapi
+    ports:
+      - "4100:8080"
+    env_file:
+      - .env
+    restart: unless-stopped
