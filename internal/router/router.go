@@ -10,6 +10,7 @@ import (
 	"github.com/jljorden/homeapi/internal/dns"
 	"github.com/jljorden/homeapi/internal/links"
 	"github.com/jljorden/homeapi/internal/nut"	
+	"github.com/jljorden/homeapi/internal/news"	
 )
 
 func New(db *sql.DB) *http.ServeMux {
@@ -23,5 +24,6 @@ func New(db *sql.DB) *http.ServeMux {
 	links.RegisterRoutes(mux)
 	dns.RegisterRoutes(mux)
 	nut.RegisterRoutes(mux)
+	news.RegisterRoutes(mux)
 	return mux
 }
