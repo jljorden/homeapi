@@ -5,8 +5,8 @@ import "net/http"
 func CORS(next http.Handler) http.Handler {
 	// allowedOrigins is a small whitelist of permitted origins.
 	allowedOrigins := map[string]struct{}{
-		"https://localhost.com:3000": {},
-		"http://localhost.com:3000":  {},
+		"https://localhost:3000": {},
+		"http://localhost:3000":  {},
 		"https://jljorden.com":       {},
 		"https://jljorden.com:13443": {},
 	}
