@@ -31,7 +31,7 @@ func getNews(w http.ResponseWriter, r *http.Request) {
 
 	query := openNewsURL.Query()
 	query.Set("apiKey", apiKey)
-	query.Set("sources", "cnn")
+	query.Set("sources", "associated-press,new-scientist")
 	openNewsURL.RawQuery = query.Encode()
 
 	req, err := http.NewRequestWithContext(
