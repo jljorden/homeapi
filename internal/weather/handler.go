@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 )
 
@@ -21,9 +22,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 }
 
 func getWeather(w http.ResponseWriter, r *http.Request) {
-	apiKey := r.URL.Query().Get("apikey")
+	apiKey := os.Getenv("WEATHER_API_KEY")
 	if apiKey == "" {
-		http.Error(w, `{"error":"Missing apikey query parameter"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"Missing apikey variable"}`, http.StatusBadRequest)
 		return
 	}
 
