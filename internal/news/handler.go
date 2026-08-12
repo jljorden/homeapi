@@ -4,8 +4,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"time"
 	"os"
+	"time"
 )
 
 var client = &http.Client{
@@ -13,7 +13,7 @@ var client = &http.Client{
 }
 
 func RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/news", getNews)
+	mux.HandleFunc("GET /goapi/news", getNews)
 }
 
 func getNews(w http.ResponseWriter, r *http.Request) {

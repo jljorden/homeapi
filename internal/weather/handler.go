@@ -17,7 +17,7 @@ var client = &http.Client{
 }
 
 func RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/weather", getWeather)
+	mux.HandleFunc("GET /goapi/weather", getWeather)
 }
 
 func getWeather(w http.ResponseWriter, r *http.Request) {

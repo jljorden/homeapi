@@ -19,7 +19,7 @@ var client = &http.Client{
 }
 
 func RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/dns", getDNS)
+	mux.HandleFunc("GET /goapi/dns", getDNS)
 }
 
 func getDNS(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +43,7 @@ func getDNS(w http.ResponseWriter, r *http.Request) {
 		dnsAPIURL.String(),
 		nil,
 	)
-	
+
 	if err != nil {
 		http.Error(w, `{"error":"failed to create dns request"}`, http.StatusInternalServerError)
 		return

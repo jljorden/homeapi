@@ -15,10 +15,10 @@ var client = &http.Client{
 }
 
 func RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/meetings", listMeetings)
-	mux.HandleFunc("GET /api/jwnews", listJWNews)
-	mux.HandleFunc("GET /api/newsscripture", getNewsScripture)
-	mux.HandleFunc("GET /api/meetings/{id}", getMeeting)
+	mux.HandleFunc("GET /goapi/meetings", listMeetings)
+	mux.HandleFunc("GET /goapi/jwnews", listJWNews)
+	mux.HandleFunc("GET /goapi/newsscripture", getNewsScripture)
+	mux.HandleFunc("GET /goapi/meetings/{id}", getMeeting)
 }
 
 func listMeetings(w http.ResponseWriter, r *http.Request) {

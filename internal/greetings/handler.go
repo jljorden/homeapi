@@ -14,7 +14,7 @@ func NewHandler(store *Store) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/greetings/random", h.RandomGreeting)
+	mux.HandleFunc("GET /goapi/greetings/random", h.RandomGreeting)
 }
 
 func (h *Handler) RandomGreeting(w http.ResponseWriter, r *http.Request) {

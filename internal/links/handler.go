@@ -25,7 +25,7 @@ var client = &http.Client{
 }
 
 func RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/links", getLinks)
+	mux.HandleFunc("GET /goapi/links", getLinks)
 }
 
 func getLinks(w http.ResponseWriter, r *http.Request) {

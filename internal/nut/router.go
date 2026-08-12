@@ -49,7 +49,7 @@ func NewClientFromEnv() (*Client, error) {
 }
 
 func RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/nut", streamUPSData)
+	mux.HandleFunc("GET /goapi/nut", streamUPSData)
 }
 
 func streamUPSData(w http.ResponseWriter, r *http.Request) {
