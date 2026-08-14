@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 
+	"github.com/jljorden/homeapi/internal/dailytext"
 	"github.com/jljorden/homeapi/internal/dns"
 	"github.com/jljorden/homeapi/internal/greetings"
 	"github.com/jljorden/homeapi/internal/jw"
@@ -26,11 +27,14 @@ func New(db *sql.DB) *http.ServeMux {
 	dns.RegisterRoutes(mux)
 	nut.RegisterRoutes(mux)
 	news.RegisterRoutes(mux)
+	dailytext.RegisterRoutes(mux)
+
 	scriptureHandler := randomscripture.NewScriptureHandler()
 
 	mux.HandleFunc(
 		"GET /goapi/randomscripture",
 		scriptureHandler.GetRandomScripture,
 	)
+
 	return mux
 }
