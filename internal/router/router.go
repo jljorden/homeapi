@@ -3,23 +3,26 @@ package router
 import (
 	"database/sql"
 	"net/http"
+	"os"
+	"strconv"
+
 	"github.com/jljorden/homeapi/internal/dailytext"
 	"github.com/jljorden/homeapi/internal/dns"
 	"github.com/jljorden/homeapi/internal/greetings"
 	"github.com/jljorden/homeapi/internal/jw"
 	"github.com/jljorden/homeapi/internal/links"
 	"github.com/jljorden/homeapi/internal/meetings"
+	"github.com/jljorden/homeapi/internal/middleware"
 	"github.com/jljorden/homeapi/internal/news"
 	"github.com/jljorden/homeapi/internal/nut"
 	"github.com/jljorden/homeapi/internal/randomscripture"
 	"github.com/jljorden/homeapi/internal/scripture"
 	"github.com/jljorden/homeapi/internal/weather"
-	"os"
-	"strconv"
+
 	"github.com/redis/go-redis/v9"
 )
 
-func New(db *sql.DB) *http.ServeMux {
+func New(db *sql.DB) http.Handler {
 	redisDB, err := strconv.Atoi(os.Getenv("REDIS_DB"))
 	if err != nil {
 		redisDB = 0
@@ -44,17 +47,25 @@ func New(db *sql.DB) *http.ServeMux {
 
 	jwdb, err := sql.Open("pgx", os.Getenv("DAILY_TEXT_DB"))
 
-defer db.Close()
+	if err != nil {
+		panic(err)
+	}
 
-dailytext.RegisterRoutes(mux, jwdb)
+	if err := jwdb.Ping(); err != nil {
+		panic(err)
+	}
+
+	dailytext.RegisterRoutes(mux, jwdb)
 
 	randomScriptureHandler := randomscripture.NewScriptureHandler()
+
 	mux.HandleFunc(
 		"GET /goapi/randomscripture",
 		randomScriptureHandler.GetRandomScripture,
 	)
 
 	scriptureService := scripture.NewService(redisClient)
+
 	meetingsService := meetings.NewService(
 		scriptureService,
 		redisClient,
@@ -70,5 +81,5 @@ dailytext.RegisterRoutes(mux, jwdb)
 		meetingsService.Handler,
 	)
 
-	return mux
+	return middleware.CORS(mux)
 }
