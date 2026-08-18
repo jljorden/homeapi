@@ -41,7 +41,12 @@ func New(db *sql.DB) *http.ServeMux {
 	dns.RegisterRoutes(mux)
 	nut.RegisterRoutes(mux)
 	news.RegisterRoutes(mux)
-	dailytext.RegisterRoutes(mux)
+
+	jwdb, err := sql.Open("pgx", os.Getenv("DAILY_TEXT_DB"))
+
+defer db.Close()
+
+dailytext.RegisterRoutes(mux, jwdb)
 
 	randomScriptureHandler := randomscripture.NewScriptureHandler()
 	mux.HandleFunc(

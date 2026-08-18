@@ -2,54 +2,41 @@ package dailytext
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync"
 	"time"
 )
 
-const (
-	cacheDir       = "/app/data/daily-text-cache"
-	cacheTTL       = 6 * time.Hour
-	requestTimeout = 15 * time.Second
-	maxHTMLBytes   = 2 << 20
-)
-
 type handler struct {
-	client  *http.Client
-	cacheMu sync.Mutex
+	db *sql.DB
 }
 
 type response struct {
-	HTML     string `json:"html"`
-	Source   string `json:"source"`
-	Cached   bool   `json:"cached"`
-	Stale    bool   `json:"stale"`
-	CachedAt string `json:"cachedAt,omitempty"`
+	HTML      string `json:"html"`
+	Source    string `json:"source"`
+	Cached    bool   `json:"cached"`
+	Stale     bool   `json:"stale"`
+	CachedAt  string `json:"cachedAt,omitempty"`
+	EntryDate string `json:"entryDate"`
 }
 
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
-type cacheEntry struct {
-	Date     string    `json:"date"`
-	HTML     string    `json:"html"`
-	Source   string    `json:"source"`
-	CachedAt time.Time `json:"cachedAt"`
+type dailyTextRow struct {
+	ID          int64
+	EntryDate   time.Time
+	ContentHTML string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
-func RegisterRoutes(mux *http.ServeMux) {
+func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 	h := &handler{
-		client: &http.Client{
-			Timeout: requestTimeout,
-		},
+		db: db,
 	}
 
 	mux.HandleFunc(
@@ -62,187 +49,87 @@ func (h *handler) getDailyText(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
-	date := r.URL.Query().Get("date")
+	dateText := r.URL.Query().Get("date")
 
-	if !validDate(date) {
+	if !validDate(dateText) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{
-			Error: "date must be YYYY/MM/DD",
+			Error: "date must be YYYY-MM-DD",
 		})
 		return
 	}
 
-	entry, cached, stale, err := h.fetchOrCache(r.Context(), date)
+	entryDate, err := time.Parse("2006-01-02", dateText)
 	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorResponse{
-			Error: err.Error(),
+		writeJSON(w, http.StatusBadRequest, errorResponse{
+			Error: "date must be YYYY-MM-DD",
+		})
+		return
+	}
+
+	entry, err := h.getFromDatabase(r.Context(), entryDate)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, errorResponse{
+			Error: "daily text not found",
+		})
+		return
+	}
+
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{
+			Error: "could not retrieve daily text",
 		})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, response{
-		HTML:     entry.HTML,
-		Source:   entry.Source,
-		Cached:   cached,
-		Stale:    stale,
-		CachedAt: entry.CachedAt.UTC().Format(time.RFC3339),
+		HTML:      entry.ContentHTML,
+		Source:    "postgresql:daily_texts",
+		Cached:    false,
+		Stale:     false,
+		CachedAt:  entry.UpdatedAt.UTC().Format(time.RFC3339),
+		EntryDate: entry.EntryDate.Format("2006-01-02"),
 	})
 }
 
-func (h *handler) fetchOrCache(
-	parent context.Context,
-	date string,
-) (cacheEntry, bool, bool, error) {
-	h.cacheMu.Lock()
-	defer h.cacheMu.Unlock()
+func (h *handler) getFromDatabase(
+	ctx context.Context,
+	entryDate time.Time,
+) (dailyTextRow, error) {
+	const query = `
+		SELECT
+			id,
+			entry_date,
+			content_html,
+			created_at,
+			updated_at
+		FROM daily_texts
+		WHERE entry_date = $1
+	`
 
-	cached, cacheErr := loadCache(date)
+	var entry dailyTextRow
 
-	if cacheErr == nil && time.Since(cached.CachedAt) < cacheTTL {
-		return *cached, true, false, nil
-	}
-
-	sourceURL := "https://wol.jw.org/en/wol/h/r1/lp-e/" + date
-
-	ctx, cancel := context.WithTimeout(parent, requestTimeout)
-	defer cancel()
-
-	request, err := http.NewRequestWithContext(
+	err := h.db.QueryRowContext(
 		ctx,
-		http.MethodGet,
-		sourceURL,
-		nil,
+		query,
+		entryDate,
+	).Scan(
+		&entry.ID,
+		&entry.EntryDate,
+		&entry.ContentHTML,
+		&entry.CreatedAt,
+		&entry.UpdatedAt,
 	)
+
 	if err != nil {
-		return cacheEntry{}, false, false, err
+		return dailyTextRow{}, err
 	}
 
-	request.Header.Set(
-		"Accept",
-		"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-	)
-	request.Header.Set("Accept-Language", "en-US,en;q=0.9")
-
-	upstream, err := h.client.Do(request)
-	if err != nil {
-		if cached != nil {
-			return *cached, true, true, nil
-		}
-
-		return cacheEntry{}, false, false, err
-	}
-	defer upstream.Body.Close()
-
-	challenged := upstream.StatusCode == http.StatusAccepted &&
-		strings.EqualFold(
-			upstream.Header.Get("x-amzn-waf-action"),
-			"challenge",
-		)
-
-	if challenged {
-		if cached != nil {
-			return *cached, true, true, nil
-		}
-
-		return cacheEntry{}, false, false, errors.New(
-			"WOL challenged the request and no cached text is available",
-		)
-	}
-
-	if upstream.StatusCode < 200 || upstream.StatusCode >= 300 {
-		if cached != nil {
-			return *cached, true, true, nil
-		}
-
-		return cacheEntry{}, false, false, fmt.Errorf(
-			"WOL returned HTTP %d",
-			upstream.StatusCode,
-		)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(upstream.Body, maxHTMLBytes))
-	if err != nil {
-		if cached != nil {
-			return *cached, true, true, nil
-		}
-
-		return cacheEntry{}, false, false, err
-	}
-
-	fresh := cacheEntry{
-		Date:     date,
-		HTML:     string(body),
-		Source:   sourceURL,
-		CachedAt: time.Now().UTC(),
-	}
-
-	if err := saveCache(fresh); err != nil {
-		fmt.Printf("daily-text cache save failed: %v\n", err)
-	}
-
-	return fresh, false, false, nil
-}
-
-func cacheFile(date string) string {
-	return filepath.Join(
-		cacheDir,
-		strings.ReplaceAll(date, "/", "-")+".json",
-	)
-}
-
-func loadCache(date string) (*cacheEntry, error) {
-	body, err := os.ReadFile(cacheFile(date))
-	if err != nil {
-		return nil, err
-	}
-
-	var entry cacheEntry
-	if err := json.Unmarshal(body, &entry); err != nil {
-		return nil, err
-	}
-
-	if entry.Date != date || entry.HTML == "" || entry.Source == "" {
-		return nil, errors.New("invalid daily-text cache file")
-	}
-
-	return &entry, nil
-}
-
-func saveCache(entry cacheEntry) error {
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return err
-	}
-
-	file, err := os.CreateTemp(cacheDir, "*.tmp")
-	if err != nil {
-		return err
-	}
-
-	tempName := file.Name()
-
-	defer func() {
-		_ = file.Close()
-		_ = os.Remove(tempName)
-	}()
-
-	body, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-
-	if _, err := file.Write(body); err != nil {
-		return err
-	}
-
-	if err := file.Close(); err != nil {
-		return err
-	}
-
-	return os.Rename(file.Name(), cacheFile(entry.Date))
+	return entry, nil
 }
 
 func validDate(value string) bool {
-	date, err := time.Parse("2006/01/02", value)
-	return err == nil && date.Format("2006/01/02") == value
+	date, err := time.Parse("2006-01-02", value)
+	return err == nil && date.Format("2006-01-02") == value
 }
 
 func writeJSON(
