@@ -53,68 +53,77 @@ func RegisterRoutes(mux *http.ServeMux) {
 }
 
 func streamUPSData(w http.ResponseWriter, r *http.Request) {
-	client, err := NewClientFromEnv()
-	if err != nil {
-		http.Error(w, `{"error":"NUT client is not configured"}`, http.StatusInternalServerError)
-		return
-	}
+    client, err := NewClientFromEnv()
+    if err != nil {
+        http.Error(w, `{"error":"NUT client is not configured"}`, http.StatusInternalServerError)
+        return
+    }
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, `{"error":"streaming is not supported by this server"}`, http.StatusInternalServerError)
-		return
-	}
+    initialData, err := client.FetchData(r.Context())
+    if err != nil {
+        http.Error(w, `{"error":"failed to fetch NUT data"}`, http.StatusBadGateway)
+        return
+    }
 
-	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache, no-transform")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
+    flusher, ok := w.(http.Flusher)
+    if !ok {
+        http.Error(w, `{"error":"streaming is not supported by this server"}`, http.StatusInternalServerError)
+        return
+    }
 
-	sendData := func() error {
-		data, err := client.FetchData(r.Context())
-		if err != nil {
-			return err
-		}
+    w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+    w.Header().Set("Cache-Control", "no-cache, no-transform")
+    w.Header().Set("X-Accel-Buffering", "no")
 
-		jsonData, err := json.Marshal(data)
-		if err != nil {
-			return err
-		}
+    send := func(data *NutData) error {
+        payload, err := json.Marshal(data)
+        if err != nil {
+            return err
+        }
 
-		_, err = fmt.Fprintf(w, "event: message\ndata: %s\n\n", jsonData)
-		if err != nil {
-			return err
-		}
+        if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", payload); err != nil {
+            return err
+        }
 
-		flusher.Flush()
-		return nil
-	}
+        flusher.Flush()
+        return nil
+    }
 
-	// Send the first UPS update immediately.
-	if err := sendData(); err != nil {
-		http.Error(w, `{"error":"failed to fetch NUT data"}`, http.StatusBadGateway)
-		return
-	}
+    if err := send(initialData); err != nil {
+        return
+    }
 
-	ticker := time.NewTicker(60 * time.Second)
-	defer ticker.Stop()
+    updateTicker := time.NewTicker(time.Minute)
+    heartbeatTicker := time.NewTicker(20 * time.Second)
+    defer updateTicker.Stop()
+    defer heartbeatTicker.Stop()
 
-	for {
-		select {
-		case <-r.Context().Done():
-			return
+    for {
+        select {
+        case <-r.Context().Done():
+            return
 
-		case <-ticker.C:
-			if err := sendData(); err != nil {
-				errorJSON, _ := json.Marshal(map[string]string{
-					"error": "failed to refresh NUT data",
-				})
+        case <-heartbeatTicker.C:
+            if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+                return
+            }
+            flusher.Flush()
 
-				_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", errorJSON)
-				flusher.Flush()
-			}
-		}
-	}
+        case <-updateTicker.C:
+            data, err := client.FetchData(r.Context())
+            if err != nil {
+                _, _ = fmt.Fprint(w,
+                    "event: error\ndata: {\"error\":\"failed to refresh NUT data\"}\n\n",
+                )
+                flusher.Flush()
+                continue
+            }
+
+            if err := send(data); err != nil {
+                return
+            }
+        }
+    }
 }
 
 func (c *Client) FetchData(ctx context.Context) (*NutData, error) {
