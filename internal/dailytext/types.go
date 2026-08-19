@@ -27,14 +27,6 @@ type scriptureLink struct {
 	Path string
 }
 
-type scriptureAPIResponse struct {
-	Items []struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		Did     any    `json:"did"`
-	} `json:"items"`
-}
-
 type errorResponse struct {
 	Error string `json:"error"`
 }

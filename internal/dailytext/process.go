@@ -2,7 +2,6 @@ package dailytext
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -131,10 +130,8 @@ func (h *handler) fetchScriptureTip(
 	id string,
 	scripturePath string,
 ) (*scriptureTip, error) {
-	requestURL := fmt.Sprintf(
-		"https://jljorden.com:13443/scripture/%s",
-		strings.TrimPrefix(scripturePath, "/"),
-	)
+	requestURL := wolOrigin + "/" +
+		strings.TrimPrefix(scripturePath, "/")
 
 	request, err := http.NewRequestWithContext(
 		ctx,
@@ -143,8 +140,17 @@ func (h *handler) fetchScriptureTip(
 		nil,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("create scripture request: %w", err)
+		return nil, fmt.Errorf("create WOL request: %w", err)
 	}
+
+	request.Header.Set(
+		"User-Agent",
+		"Mozilla/5.0 (compatible; DailyTextBot/1.0)",
+	)
+	request.Header.Set(
+		"Accept",
+		"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+	)
 
 	client := &http.Client{
 		Timeout: 15 * time.Second,
@@ -152,38 +158,46 @@ func (h *handler) fetchScriptureTip(
 
 	resp, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("fetch scripture: %w", err)
+		return nil, fmt.Errorf("fetch WOL scripture: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf(
-			"scripture endpoint returned %d",
+			"WOL scripture returned status %d",
 			resp.StatusCode,
 		)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	doc, err := goquery.NewDocumentFromReader(
+		io.LimitReader(resp.Body, 2<<20),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("read scripture response: %w", err)
+		return nil, fmt.Errorf("parse WOL scripture HTML: %w", err)
 	}
 
-	var payload scriptureAPIResponse
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("decode scripture response: %w", err)
+	item := doc.Find("body").First()
+
+	if item.Length() == 0 {
+		return nil, fmt.Errorf("WOL scripture page had no body")
 	}
 
-	if len(payload.Items) == 0 {
-		return nil, fmt.Errorf("scripture endpoint returned no items")
+	contentHTML, err := item.Html()
+	if err != nil {
+		return nil, fmt.Errorf("render WOL scripture HTML: %w", err)
 	}
 
-	item := payload.Items[0]
+	title := strings.TrimSpace(doc.Find("title").First().Text())
+
+	if contentHTML == "" {
+		return nil, fmt.Errorf("WOL scripture page had no content")
+	}
 
 	return &scriptureTip{
 		ID:        id,
-		Citation:  item.Title,
-		Text:      normalizeTooltipHTML(item.Content),
-		Reference: item.Did != nil,
+		Citation:  title,
+		Text:      normalizeTooltipHTML(contentHTML),
+		Reference: true,
 	}, nil
 }
 
