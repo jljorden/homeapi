@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,12 +16,25 @@ import (
 
 const wolOrigin = "https://wol.jw.org"
 
-var scriptureTokenPattern = regexp.MustCompile(
+type scriptureLink struct {
+	ID   string
+	Path string
+}
+
+type scriptureAPIResponse struct {
+	Items []struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+		Did     any    `json:"did"`
+	} `json:"items"`
+}
+
+var scriptureLinkPattern = regexp.MustCompile(
 	`\[([^\]]*)\]\(([^)]+)\)`,
 )
 
 var wolPathPattern = regexp.MustCompile(
-	`(?i)/wol/(?:bc|dx|b|publication)/[^"\s)]+`,
+	`/wol/(?:bc|dx|b|publication)/[^"\s)]+`,
 )
 
 func (h *handler) processHTML(
@@ -117,11 +129,7 @@ func (h *handler) fetchScriptureTips(
 	tips := make([]scriptureTip, 0, len(links))
 
 	for _, link := range links {
-		tip, err := h.fetchScriptureTip(
-			ctx,
-			link.ID,
-			link.Path,
-		)
+		tip, err := h.fetchScriptureTip(ctx, link.ID, link.Path)
 		if err != nil {
 			fmt.Printf(
 				"dailytext: tooltip failed id=%s path=%s error=%v\n",
@@ -174,12 +182,12 @@ func (h *handler) fetchScriptureTip(
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return nil, fmt.Errorf("read WOL scripture response: %w", err)
+		return nil, fmt.Errorf("read WOL response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf(
-			"WOL scripture returned status %d: %s",
+			"WOL returned status %d: %s",
 			resp.StatusCode,
 			string(body),
 		)
@@ -187,7 +195,7 @@ func (h *handler) fetchScriptureTip(
 
 	var payload scriptureAPIResponse
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("decode WOL JSON response: %w", err)
+		return nil, fmt.Errorf("decode WOL JSON: %w", err)
 	}
 
 	if len(payload.Items) == 0 {
@@ -195,65 +203,82 @@ func (h *handler) fetchScriptureTip(
 	}
 
 	item := payload.Items[0]
-	tooltipHTML := scriptureContentToHTML(item.Content)
-
-	if tooltipHTML == "" {
-		return nil, fmt.Errorf("WOL scripture content was empty")
-	}
 
 	return &scriptureTip{
 		ID:        id,
 		Citation:  item.Title,
-		Text:      tooltipHTML,
+		Text:      normalizeTooltipHTML(item.Content),
 		Reference: item.Did != nil,
 	}, nil
 }
 
-func scriptureContentToHTML(content string) string {
-	content = strings.TrimSpace(content)
+func normalizeTooltipHTML(content string) string {
+	doc, err := goquery.NewDocumentFromReader(
+		strings.NewReader(
+			`<div id="scripture-tooltip-root">` +
+				content +
+				`</div>`,
+		),
+	)
+	if err != nil {
+		return ""
+	}
 
-	content = scriptureTokenPattern.ReplaceAllStringFunc(
+	root := doc.Find("#scripture-tooltip-root").First()
+	if root.Length() == 0 {
+		return ""
+	}
+
+	root.Find("*").Each(func(_ int, selection *goquery.Selection) {
+		ownHTML, err := selection.Html()
+		if err != nil || !strings.Contains(ownHTML, "](") {
+			return
+		}
+
+		selection.SetHtml(convertBracketLinks(ownHTML))
+	})
+
+	result, err := root.Html()
+	if err != nil {
+		return ""
+	}
+
+	return result
+}
+
+func convertBracketLinks(content string) string {
+	return scriptureLinkPattern.ReplaceAllStringFunc(
 		content,
 		func(match string) string {
-			parts := scriptureTokenPattern.FindStringSubmatch(match)
+			parts := scriptureLinkPattern.FindStringSubmatch(match)
 			if len(parts) != 3 {
-				return html.EscapeString(match)
+				return match
 			}
 
-			label := html.EscapeString(parts[1])
-			href := wolURLFromToken(parts[2])
+			label := parts[1]
+			href := normalizeTooltipLink(parts[2])
 
 			if href == "" {
 				return label
 			}
 
-			return `<a href="` + html.EscapeString(href) +
+			return `<a href="` + href +
 				`" target="_blank" rel="noreferrer">` +
 				label +
 				`</a>`
 		},
 	)
-
-	content = html.EscapeString(content)
-
-	// Restore only the <a> tags generated above after escaping normal text.
-	content = strings.ReplaceAll(content, "&lt;a ", "<a ")
-	content = strings.ReplaceAll(content, "&lt;/a&gt;", "</a>")
-	content = strings.ReplaceAll(content, "&quot;", `"`)
-
-	content = strings.ReplaceAll(content, "\r\n", "<br />")
-	content = strings.ReplaceAll(content, "\n", "<br />")
-
-	return content
 }
 
-func wolURLFromToken(value string) string {
-	decoded, err := url.PathUnescape(strings.TrimSpace(value))
+func normalizeTooltipLink(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+
+	decoded, err := url.PathUnescape(rawURL)
 	if err == nil {
-		value = decoded
+		rawURL = decoded
 	}
 
-	path := wolPathPattern.FindString(value)
+	path := wolPathPattern.FindString(rawURL)
 	if path == "" {
 		return ""
 	}
