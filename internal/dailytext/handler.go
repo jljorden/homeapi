@@ -13,27 +13,6 @@ type handler struct {
 	db *sql.DB
 }
 
-type response struct {
-	HTML      string `json:"html"`
-	Source    string `json:"source"`
-	Cached    bool   `json:"cached"`
-	Stale     bool   `json:"stale"`
-	CachedAt  string `json:"cachedAt,omitempty"`
-	EntryDate string `json:"entryDate"`
-}
-
-type errorResponse struct {
-	Error string `json:"error"`
-}
-
-type dailyTextRow struct {
-	ID          int64
-	EntryDate   time.Time
-	ContentHTML string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-}
-
 func RegisterRoutes(mux *http.ServeMux, db *sql.DB) {
 	h := &handler{
 		db: db,
@@ -81,13 +60,29 @@ func (h *handler) getDailyText(
 		return
 	}
 
+	html, tips, err := h.processHTML(
+		r.Context(),
+		entry.ContentHTML,
+	)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{
+			Error: "could not process daily text",
+		})
+		return
+	}
+
+	if tips == nil {
+		tips = make([]scriptureTip, 0)
+	}
+
 	writeJSON(w, http.StatusOK, response{
-		HTML:      entry.ContentHTML,
-		Source:    "postgresql:daily_texts",
-		Cached:    false,
-		Stale:     false,
-		CachedAt:  entry.UpdatedAt.UTC().Format(time.RFC3339),
-		EntryDate: entry.EntryDate.Format("2006-01-02"),
+		HTML:          html,
+		ScriptureTips: tips,
+		Source:        "postgresql:daily_texts",
+		Cached:        false,
+		Stale:         false,
+		CachedAt:      entry.UpdatedAt.UTC().Format(time.RFC3339),
+		EntryDate:     entry.EntryDate.Format("2006-01-02"),
 	})
 }
 
@@ -119,7 +114,6 @@ func (h *handler) getFromDatabase(
 		&entry.CreatedAt,
 		&entry.UpdatedAt,
 	)
-
 	if err != nil {
 		return dailyTextRow{}, err
 	}
@@ -129,7 +123,9 @@ func (h *handler) getFromDatabase(
 
 func validDate(value string) bool {
 	date, err := time.Parse("2006-01-02", value)
-	return err == nil && date.Format("2006-01-02") == value
+
+	return err == nil &&
+		date.Format("2006-01-02") == value
 }
 
 func writeJSON(
