@@ -38,3 +38,11 @@ type dailyTextRow struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
+
+type scriptureAPIResponse struct {
+	Items []struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+		Did     any    `json:"did"`
+	} `json:"items"`
+}

@@ -2,10 +2,13 @@ package dailytext
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +16,10 @@ import (
 )
 
 const wolOrigin = "https://wol.jw.org"
+
+var markdownLinkPattern = regexp.MustCompile(
+	`\[([^\]]+)\]\(([^)]+)\)`,
+)
 
 func (h *handler) processHTML(
 	ctx context.Context,
@@ -68,16 +75,12 @@ func (h *handler) processHTML(
 
 	tips := h.fetchScriptureTips(ctx, links)
 
-	html, err := doc.Find("#daily-text-root").Html()
+	renderedHTML, err := doc.Find("#daily-text-root").Html()
 	if err != nil {
 		return "", nil, fmt.Errorf("render daily-text HTML: %w", err)
 	}
 
-	if tips == nil {
-		tips = make([]scriptureTip, 0)
-	}
-
-	return html, tips, nil
+	return renderedHTML, tips, nil
 }
 
 func normalizeWOLURL(href string) (string, error) {
@@ -116,6 +119,12 @@ func (h *handler) fetchScriptureTips(
 			link.Path,
 		)
 		if err != nil {
+			fmt.Printf(
+				"dailytext: tooltip failed id=%s path=%s error=%v\n",
+				link.ID,
+				link.Path,
+				err,
+			)
 			continue
 		}
 
@@ -143,13 +152,10 @@ func (h *handler) fetchScriptureTip(
 		return nil, fmt.Errorf("create WOL request: %w", err)
 	}
 
+	request.Header.Set("Accept", "application/json")
 	request.Header.Set(
 		"User-Agent",
 		"Mozilla/5.0 (compatible; DailyTextBot/1.0)",
-	)
-	request.Header.Set(
-		"Accept",
-		"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 	)
 
 	client := &http.Client{
@@ -162,57 +168,97 @@ func (h *handler) fetchScriptureTip(
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read WOL scripture response: %w", err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf(
-			"WOL scripture returned status %d",
+			"WOL scripture returned status %d: %s",
 			resp.StatusCode,
+			string(body),
 		)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(
-		io.LimitReader(resp.Body, 2<<20),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("parse WOL scripture HTML: %w", err)
+	var payload scriptureAPIResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf(
+			"decode WOL scripture JSON: %w",
+			err,
+		)
 	}
 
-	item := doc.Find("body").First()
-
-	if item.Length() == 0 {
-		return nil, fmt.Errorf("WOL scripture page had no body")
+	if len(payload.Items) == 0 {
+		return nil, fmt.Errorf("WOL scripture returned no items")
 	}
 
-	contentHTML, err := item.Html()
-	if err != nil {
-		return nil, fmt.Errorf("render WOL scripture HTML: %w", err)
-	}
-
-	title := strings.TrimSpace(doc.Find("title").First().Text())
-
-	if contentHTML == "" {
-		return nil, fmt.Errorf("WOL scripture page had no content")
-	}
+	item := payload.Items[0]
 
 	return &scriptureTip{
 		ID:        id,
-		Citation:  title,
-		Text:      normalizeTooltipHTML(contentHTML),
-		Reference: true,
+		Citation:  item.Title,
+		Text:      scriptureMarkdownToHTML(item.Content),
+		Reference: item.Did != nil,
 	}, nil
 }
 
-func normalizeTooltipHTML(value string) string {
-	value = strings.ReplaceAll(
-		value,
-		`src="/`,
-		`src="`+wolOrigin+`/`,
+func scriptureMarkdownToHTML(content string) string {
+	content = strings.TrimSpace(content)
+
+	content = markdownLinkPattern.ReplaceAllStringFunc(
+		content,
+		func(match string) string {
+			parts := markdownLinkPattern.FindStringSubmatch(match)
+
+			if len(parts) != 3 {
+				return match
+			}
+
+			label := html.EscapeString(parts[1])
+			href := normalizeScriptureLink(parts[2])
+
+			return `<a href="` + href +
+				`" target="_blank" rel="noreferrer">` +
+				label +
+				`</a>`
+		},
 	)
 
-	value = strings.ReplaceAll(
-		value,
-		`href="/`,
-		`href="`+wolOrigin+`/`,
-	)
+	content = strings.ReplaceAll(content, "\r\n", "<br />")
+	content = strings.ReplaceAll(content, "\n", "<br />")
 
-	return value
+	return content
+}
+
+func normalizeScriptureLink(value string) string {
+	value = strings.TrimSpace(value)
+
+	parsedURL, err := url.Parse(value)
+	if err != nil {
+		return wolOrigin
+	}
+
+	path, err := url.PathUnescape(parsedURL.EscapedPath())
+	if err != nil {
+		return wolOrigin
+	}
+
+	path = strings.TrimSpace(path)
+
+	path = strings.TrimPrefix(path, `/"`)
+	path = strings.TrimSuffix(path, `/"`)
+	path = strings.TrimPrefix(path, `/%22`)
+	path = strings.TrimSuffix(path, `/%22`)
+	path = strings.Trim(path, `"`)
+
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	if !strings.HasPrefix(path, "/wol/") {
+		return wolOrigin
+	}
+
+	return wolOrigin + path
 }
