@@ -2,13 +2,10 @@ package dailytext
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -16,10 +13,6 @@ import (
 )
 
 const wolOrigin = "https://wol.jw.org"
-
-var markdownLinkPattern = regexp.MustCompile(
-	`\[([^\]]+)\]\(([^)]+)\)`,
-)
 
 func (h *handler) processHTML(
 	ctx context.Context,
@@ -78,6 +71,10 @@ func (h *handler) processHTML(
 	renderedHTML, err := doc.Find("#daily-text-root").Html()
 	if err != nil {
 		return "", nil, fmt.Errorf("render daily-text HTML: %w", err)
+	}
+
+	if tips == nil {
+		tips = make([]scriptureTip, 0)
 	}
 
 	return renderedHTML, tips, nil
@@ -152,7 +149,10 @@ func (h *handler) fetchScriptureTip(
 		return nil, fmt.Errorf("create WOL request: %w", err)
 	}
 
-	request.Header.Set("Accept", "application/json")
+	request.Header.Set(
+		"Accept",
+		"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+	)
 	request.Header.Set(
 		"User-Agent",
 		"Mozilla/5.0 (compatible; DailyTextBot/1.0)",
@@ -168,97 +168,66 @@ func (h *handler) fetchScriptureTip(
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read WOL scripture response: %w", err)
-	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf(
-			"WOL scripture returned status %d: %s",
+			"WOL scripture returned status %d",
 			resp.StatusCode,
-			string(body),
 		)
 	}
 
-	var payload scriptureAPIResponse
-	if err := json.Unmarshal(body, &payload); err != nil {
+	doc, err := goquery.NewDocumentFromReader(
+		io.LimitReader(resp.Body, 2<<20),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("parse WOL scripture HTML: %w", err)
+	}
+
+	scripture := doc.Find("article.bibleCitation").First()
+	if scripture.Length() == 0 {
 		return nil, fmt.Errorf(
-			"decode WOL scripture JSON: %w",
-			err,
+			"could not find article.bibleCitation in WOL response",
 		)
 	}
 
-	if len(payload.Items) == 0 {
-		return nil, fmt.Errorf("WOL scripture returned no items")
+	contentHTML, err := scripture.Html()
+	if err != nil {
+		return nil, fmt.Errorf("render scripture tooltip HTML: %w", err)
 	}
 
-	item := payload.Items[0]
+	if contentHTML == "" {
+		return nil, fmt.Errorf("WOL scripture content was empty")
+	}
+
+	title := strings.TrimSpace(
+		doc.Find("meta[property='og:title']").AttrOr("content", ""),
+	)
+
+	if title == "" {
+		title = strings.TrimSpace(
+			doc.Find("title").First().Text(),
+		)
+	}
 
 	return &scriptureTip{
 		ID:        id,
-		Citation:  item.Title,
-		Text:      scriptureMarkdownToHTML(item.Content),
-		Reference: item.Did != nil,
+		Citation:  title,
+		Text:      normalizeTooltipHTML(contentHTML),
+		Reference: true,
 	}, nil
 }
 
-func scriptureMarkdownToHTML(content string) string {
-	content = strings.TrimSpace(content)
-
-	content = markdownLinkPattern.ReplaceAllStringFunc(
-		content,
-		func(match string) string {
-			parts := markdownLinkPattern.FindStringSubmatch(match)
-
-			if len(parts) != 3 {
-				return match
-			}
-
-			label := html.EscapeString(parts[1])
-			href := normalizeScriptureLink(parts[2])
-
-			return `<a href="` + href +
-				`" target="_blank" rel="noreferrer">` +
-				label +
-				`</a>`
-		},
+func normalizeTooltipHTML(value string) string {
+	value = strings.ReplaceAll(
+		value,
+		`src="/`,
+		`src="`+wolOrigin+`/`,
 	)
 
-	content = strings.ReplaceAll(content, "\r\n", "<br />")
-	content = strings.ReplaceAll(content, "\n", "<br />")
+	value = strings.ReplaceAll(
+		value,
+		`href="/`,
+		`href="`+wolOrigin+`/`,
+	)
 
-	return content
-}
-
-func normalizeScriptureLink(value string) string {
-	value = strings.TrimSpace(value)
-
-	parsedURL, err := url.Parse(value)
-	if err != nil {
-		return wolOrigin
-	}
-
-	path, err := url.PathUnescape(parsedURL.EscapedPath())
-	if err != nil {
-		return wolOrigin
-	}
-
-	path = strings.TrimSpace(path)
-
-	path = strings.TrimPrefix(path, `/"`)
-	path = strings.TrimSuffix(path, `/"`)
-	path = strings.TrimPrefix(path, `/%22`)
-	path = strings.TrimSuffix(path, `/%22`)
-	path = strings.Trim(path, `"`)
-
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-
-	if !strings.HasPrefix(path, "/wol/") {
-		return wolOrigin
-	}
-
-	return wolOrigin + path
+	return value
 }
