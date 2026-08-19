@@ -16,19 +16,6 @@ import (
 
 const wolOrigin = "https://wol.jw.org"
 
-type scriptureLink struct {
-	ID   string
-	Path string
-}
-
-type scriptureAPIResponse struct {
-	Items []struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		Did     any    `json:"did"`
-	} `json:"items"`
-}
-
 var scriptureLinkPattern = regexp.MustCompile(
 	`\[([^\]]*)\]\(([^)]+)\)`,
 )
